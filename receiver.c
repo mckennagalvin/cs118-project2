@@ -1,8 +1,7 @@
-
 /*
  receiver.c
  client which requests a file from the sender (server) using UDP
- usage: ./receiver <hostname> <port number> <filename>
+ usage: ./receiver <hostname> <port number> <filename> <loss probability> <corruption probability>
  */
 
 #include <stdio.h>
@@ -13,6 +12,8 @@
 #include <stdlib.h>
 #include <strings.h>
 
+ #include "packet.c"
+
 void error(char *msg)
 {
     perror(msg);
@@ -22,17 +23,37 @@ void error(char *msg)
 int main(int argc, char *argv[])
 {
     int sockfd; // socket descriptor
-    int portno, n, recvlen;
+    struct hostent *server; // contains tons of information, including the server's IP address
+    int portno;
+    char * filename;
+    int lossprob;
+    int corruptprob;
+    int recvlen;
     socklen_t servlen;
     struct sockaddr_in serv_addr;
-    struct hostent *server; // contains tons of information, including the server's IP address
-    char recv_buf[2048]; // receive buffer
-    char * send_message = "this is a test, receiver to sender";
+    struct packet request;
+    struct packet receive;
 
-    char buffer[256];
-    if (argc < 3) {
-       fprintf(stderr,"usage %s hostname port\n", argv[0]);
+    if (argc < 6) {
+       fprintf(stderr,"usage %s <hostname> <port> <filename> <loss probability> <corruption probability>\n", argv[0]);
        exit(0);
+    }
+
+    // get command line arguments
+    server = gethostbyname(argv[1]);
+    portno = atoi(argv[2]);
+    filename = argv[3];
+    lossprob = atof(argv[4]);
+    corruptprob = atof(argv[5]);
+
+    // error checks on arguments
+    if (lossprob < 0.0 || lossprob > 1.0)
+        error("packet loss probability must be between 0 and 1");
+    if (corruptprob < 0.0 || corruptprob > 1.0)
+        error("packet corruption probability must be between 0 and 1");
+    if (server == NULL) {
+        fprintf(stderr,"ERROR, no such host\n");
+        exit(0);
     }
 
     // create UDP socket
@@ -40,31 +61,35 @@ int main(int argc, char *argv[])
     if (sockfd < 0) 
         error("ERROR opening socket");
     
-    server = gethostbyname(argv[1]); // takes a string like "www.yahoo.com", and returns a struct hostent which contains information, as IP address, address type, the length of the addresses...
-    if (server == NULL) {
-        fprintf(stderr,"ERROR, no such host\n");
-        exit(0);
-    }
-    
     // fill in address info
     memset((char *) &serv_addr, 0, sizeof(serv_addr));
-    portno = atoi(argv[2]);
     serv_addr.sin_family = AF_INET;
     bcopy((char *)server->h_addr, (char *)&serv_addr.sin_addr.s_addr, server->h_length);
     serv_addr.sin_port = htons(portno);
     
+    // create request
+    memset((char *) &request, 0, sizeof(request));
+    strcpy(request.data, filename);
+    request.length = strlen(filename) + 1;
+    request.type = TYPE_REQUEST;
+
+    printf("REQUEST PACKET:\n");
+    printf("data: %s\n", request.data);
+    printf("length: %d\n", request.length);
+    printf("type: %d\n\n", request.type);
+
     // send request
-    if (sendto(sockfd, send_message, strlen(send_message) + 1, 0, (struct sockaddr *) &serv_addr, servlen) < 0)
+    if (sendto(sockfd, &request, sizeof(request), 0, (struct sockaddr *) &serv_addr, sizeof(serv_addr)) < 0)
       error("ERROR sending request");
-    printf("sent request");
+    printf("sent request for file %s\n", filename);
 
     // scan for messages from server
     while (1) {
 
-        recvlen = recvfrom(sockfd, recv_buf, 2048, 0, (struct sockaddr *) &serv_addr, &servlen);
+        recvlen = recvfrom(sockfd, &receive, sizeof(receive), 0, (struct sockaddr *) &serv_addr, &servlen);
         if (recvlen < 0)
           error("ERROR receiving from server");
-        printf("received %d bytes from server\n", recvlen);
+        printf("packet received from server: seq #%d, %d bytes data\n", receive.seq, receive.length);
 
     }
     

@@ -13,6 +13,7 @@
 #include <sys/wait.h>    // for the waitpid() system call
 #include <signal.h>	     // signal name macros, and the kill() prototype
 
+#include "packet.c"
 
 void error(char *msg)
 {
@@ -23,12 +24,15 @@ void error(char *msg)
 int main(int argc, char *argv[])
 {
   int sockfd, newsockfd, portno, recvlen;
-  socklen_t clilen;
   struct sockaddr_in serv_addr, cli_addr;
-  char recv_buf[2048]; // receive buffer
-  char * send_message = "this is a test, sender to receiver";
-
-
+  socklen_t clilen = sizeof(cli_addr);
+  struct packet send;
+  struct packet receive;
+  FILE * f;
+  char * filename;
+  int filesize;
+  int numpackets;
+  int i;
 
   if (argc < 2) {
     fprintf(stderr,"ERROR, no port provided\n");
@@ -54,16 +58,45 @@ int main(int argc, char *argv[])
   // scan for requests from client
   while (1) {
 
-    // receieve data from client
-    recvlen = recvfrom(sockfd, recv_buf, 2048, 0, (struct sockaddr *) &cli_addr, &clilen);
+    // receieve request from client
+    recvlen = recvfrom(sockfd, &receive, sizeof(receive), 0, (struct sockaddr *) &cli_addr, &clilen);
     if (recvlen < 0)
       error("ERROR receiving data from client");
-    printf("received %d bytes\n", recvlen);
+    printf("received %d bytes\n", receive.length);
 
-    // send response back
-    if (sendto(sockfd, send_message, strlen(send_message) + 1, 0, (struct sockaddr *) &cli_addr, clilen) < 0)
-      error("ERROR sending data to client");
-    printf("sent to client");
+    // debugging
+    printf("request type: %d\n", receive.type);
+    printf("file requested: %s\n", receive.data);
+
+    // open file
+    if (receive.type == TYPE_REQUEST) {
+      f = fopen(receive.data, "r");
+      if (f == NULL)
+        error("ERROR opening file");
+    }
+
+    // find file size and determine number of packets needed
+    fseek(f, 0, SEEK_END);
+    filesize = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    printf("requested file is %d bytes", filesize);
+    numpackets = filesize / PACKET_SIZE;
+    if (filesize % PACKET_SIZE > 0)
+      numpackets++;
+    printf("%d packets are needed to send the file", numpackets);
+
+    // split data into packets and send
+    for (i = 0; i < numpackets; i++) {
+      memset((char *) &send, 0, sizeof(send));
+      send.seq = i + 1;
+      send.length = fread(send.data, sizeof(char), PACKET_SIZE, f);
+      send.type = TYPE_DATA;
+      if (sendto(sockfd, &send, sizeof(send), 0, (struct sockaddr *) &cli_addr, clilen) < 0)
+        error("ERROR sending data to client");
+      printf("sent packet %d to client", send.seq);
+    }
+
+  
   }
      
   // never reached if we never break out of the loop but whatever
