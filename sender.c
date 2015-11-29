@@ -1,7 +1,7 @@
 /*
  sender.c
  server which services the file requested by the client
- usage: ./sender <port number>
+ usage: ./sender <port number> <CWnd size> <loss probability> <corruption probability>
  */
 
 #include <stdio.h>
@@ -21,23 +21,131 @@ void error(char *msg)
   exit(1);
 }
 
+// Listens for an ack, returning the ack number
+int listen_for_ack(int sockfd) {
+  int recvlen;
+  int ack_number = -1;
+  struct packet receive;
+
+  while (ack_number == -1) {
+    recvlen = recvfrom(sockfd, &receive, sizeof(receive), 0, NULL, NULL);
+    if (recvlen < 0)
+      error("ERROR receiving ack from client");
+    if (receive.type != TYPE_ACK) {
+      fprintf(stderr, "Expected ACK, received type %d", receive.type);
+      continue;
+    }
+    ack_number = receive.seq;
+  } 
+  printf("Received ack %d.\n", ack_number);
+  return ack_number;
+}
+
+// Sends an individual packet over UDP
+void send_packet(struct packet pkt, int sockfd, struct sockaddr_in cli_addr, socklen_t clilen) 
+{
+  int type = pkt.type;
+  char readable_type[11];
+  if (type == TYPE_DATA)
+    strcpy(readable_type, "data");
+  else if (type == TYPE_FINAL_DATA)
+    strcpy(readable_type, "final_data");
+  else
+    strcpy(readable_type, "non-data");
+
+  if (sendto(sockfd, &pkt, sizeof(pkt), 0, (struct sockaddr *) &cli_addr, clilen) < 0)
+    error("ERROR sending data to client");
+  printf("sent %s packet %d to client.\n", readable_type, pkt.seq);
+}
+
+// Reliably sends an array of packets
+void rdt_send_packets(struct packet *packets, int sockfd, struct sockaddr_in cli_addr, socklen_t clilen, int cwndsize)
+{
+  int nextseqnum = 0;
+  int base = 0;
+  int all_sent = 0;
+
+  while(!all_sent || (base < nextseqnum)) {
+    while (nextseqnum < base + cwndsize && !all_sent) {
+      send_packet(packets[nextseqnum], sockfd, cli_addr, clilen);
+      if (packets[nextseqnum].type == TYPE_FINAL_DATA) {
+        all_sent = 1;
+        nextseqnum++;
+        break;
+      }
+      nextseqnum++;
+    }
+    base = listen_for_ack(sockfd) + 1;
+  }
+}
+
+// Returns an array of packets needed to send file f
+struct packet * prepare_packets(FILE * f) 
+{
+  int i;
+  int filesize;
+  int numpackets;
+  struct packet send;
+  struct packet *packets;
+
+  // find file size and determine number of packets needed
+  fseek(f, 0, SEEK_END);
+  filesize = ftell(f);
+  fseek(f, 0, SEEK_SET);
+  printf("requested file is %d bytes. ", filesize);
+  numpackets = filesize / PACKET_SIZE;
+  if (filesize % PACKET_SIZE > 0)
+    numpackets++;
+  printf("%d packets are needed to send the file.\n", numpackets);
+
+  packets = (struct packet*)malloc(sizeof(struct packet) * numpackets);
+  
+  // split data into packets and send
+  for (i = 0; i < numpackets; i++) {
+    memset((char *) &send, 0, sizeof(send));
+    send.seq = i;
+    send.length = fread(send.data, sizeof(char), PACKET_SIZE, f);
+    
+    if (i == numpackets-1) 
+      send.type = TYPE_FINAL_DATA;
+    else 
+      send.type = TYPE_DATA;
+    
+    packets[i] = send;
+    // send_packet(send, sockfd, cli_addr, clilen);
+  }
+  return packets;
+}
+
 int main(int argc, char *argv[])
 {
   int sockfd, newsockfd, portno, recvlen;
   struct sockaddr_in serv_addr, cli_addr;
   socklen_t clilen = sizeof(cli_addr);
-  struct packet send;
   struct packet receive;
   FILE * f;
   char * filename;
-  int filesize;
-  int numpackets;
   int i;
+  double lossprob, corruptprob;
+  int cwndsize;
+  struct packet *packets;
 
-  if (argc < 2) {
-    fprintf(stderr,"ERROR, no port provided\n");
+  if (argc == 2) {
+    portno = atoi(argv[1]);
+    cwndsize = 1;
+    lossprob = 0;
+    corruptprob = 0;
+  } else if (argc < 5) {
+    fprintf(stderr,"usage: %s <port number> <CWnd size> <loss probability> <corruption probability>\n", argv[0]);
     exit(1);
+  } else {
+    portno = atoi(argv[1]);
+    cwndsize = atoi(argv[2]);
+    lossprob = atof(argv[3]);
+    corruptprob = atof(argv[4]);
   }
+
+  printf("CWnd size: %d\nProbLoss: %f\nProbCorrupt: %f\nServer listing on port %d...\n\n", cwndsize, lossprob, corruptprob, portno);
 
   // create UDP socket
   sockfd = socket(AF_INET, SOCK_DGRAM, 0);
@@ -46,7 +154,6 @@ int main(int argc, char *argv[])
 
   // fill in address info
   memset((char *) &serv_addr, 0, sizeof(serv_addr));  //reset memory
-  portno = atoi(argv[1]);
   serv_addr.sin_family = AF_INET;
   serv_addr.sin_addr.s_addr = INADDR_ANY;
   serv_addr.sin_port = htons(portno);
@@ -73,34 +180,22 @@ int main(int argc, char *argv[])
       f = fopen(receive.data, "r");
       if (f == NULL)
         error("ERROR opening file");
+    } else {
+      fprintf(stderr, "Packet not of type request\n");
+      continue;
     }
 
-    // find file size and determine number of packets needed
-    fseek(f, 0, SEEK_END);
-    filesize = ftell(f);
-    fseek(f, 0, SEEK_SET);
-    printf("requested file is %d bytes", filesize);
-    numpackets = filesize / PACKET_SIZE;
-    if (filesize % PACKET_SIZE > 0)
-      numpackets++;
-    printf("%d packets are needed to send the file", numpackets);
-
-    // split data into packets and send
-    for (i = 0; i < numpackets; i++) {
-      memset((char *) &send, 0, sizeof(send));
-      send.seq = i + 1;
-      send.length = fread(send.data, sizeof(char), PACKET_SIZE, f);
-      send.type = TYPE_DATA;
-      if (sendto(sockfd, &send, sizeof(send), 0, (struct sockaddr *) &cli_addr, clilen) < 0)
-        error("ERROR sending data to client");
-      printf("sent packet %d to client", send.seq);
-    }
-
-  
+    packets = prepare_packets(f);
+    rdt_send_packets(packets, sockfd, cli_addr, clilen, cwndsize);
+    free(packets);
+    
+    printf("Finished sending file. Listening for new request...\n\n");
   }
      
   // never reached if we never break out of the loop but whatever
   close(sockfd); 
   return 0; 
 }
+
+
 

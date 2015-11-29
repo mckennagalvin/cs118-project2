@@ -11,3 +11,6 @@ receiver : receiver.o
 
 receiver.o : receiver.c
 	gcc -std=c99 -c receiver.c
+
+clean: 
+	rm receiver sender receiver.o sender.o

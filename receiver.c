@@ -20,14 +20,27 @@ void error(char *msg)
     exit(0);
 }
 
+void send_ack(int ack_num, int sockfd, struct sockaddr_in serv_addr) {
+    struct packet ack;
+    ack.type = TYPE_ACK;
+    ack.seq = ack_num;
+    ack.length = 0;
+    strcpy(ack.data, "");
+
+    if (sendto(sockfd, &ack, sizeof(ack), 0, (struct sockaddr *) &serv_addr, sizeof(serv_addr)) < 0)
+        error("ERROR sending request");
+    
+    printf("Sent ack %d.\n", ack_num);
+}
+
 int main(int argc, char *argv[])
 {
     int sockfd; // socket descriptor
     struct hostent *server; // contains tons of information, including the server's IP address
     int portno;
     char * filename;
-    int lossprob;
-    int corruptprob;
+    double lossprob;
+    double corruptprob;
     int recvlen;
     socklen_t servlen;
     struct sockaddr_in serv_addr;
@@ -36,7 +49,7 @@ int main(int argc, char *argv[])
 
     if (argc < 6) {
        fprintf(stderr,"usage %s <hostname> <port> <filename> <loss probability> <corruption probability>\n", argv[0]);
-       exit(0);
+       exit(1);
     }
 
     // get command line arguments
@@ -89,8 +102,10 @@ int main(int argc, char *argv[])
         recvlen = recvfrom(sockfd, &receive, sizeof(receive), 0, (struct sockaddr *) &serv_addr, &servlen);
         if (recvlen < 0)
           error("ERROR receiving from server");
-        printf("packet received from server: seq #%d, %d bytes data\n", receive.seq, receive.length);
-
+        printf("packet received from server: seq #%d, %d bytes data. ", receive.seq, receive.length);
+        send_ack(receive.seq, sockfd, serv_addr);
+        if(receive.type == TYPE_FINAL_DATA)
+            break;
     }
     
     close(sockfd);
