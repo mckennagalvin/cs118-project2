@@ -86,15 +86,12 @@ int main(int argc, char *argv[])
     request.length = strlen(filename) + 1;
     request.type = TYPE_REQUEST;
 
-    printf("REQUEST PACKET:\n");
-    printf("data: %s\n", request.data);
-    printf("length: %d\n", request.length);
-    printf("type: %d\n\n", request.type);
+    printf("\nSending request for %s\n", request.data);
 
     // send request
     if (sendto(sockfd, &request, sizeof(request), 0, (struct sockaddr *) &serv_addr, sizeof(serv_addr)) < 0)
       error("ERROR sending request");
-    printf("sent request for file %s\n", filename);
+    printf("Sent request for file %s\n", filename);
 
     // scan for messages from server
     while (1) {

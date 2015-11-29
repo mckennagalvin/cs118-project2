@@ -55,7 +55,10 @@ void send_packet(struct packet pkt, int sockfd, struct sockaddr_in cli_addr, soc
 
   if (sendto(sockfd, &pkt, sizeof(pkt), 0, (struct sockaddr *) &cli_addr, clilen) < 0)
     error("ERROR sending data to client");
-  printf("sent %s packet %d to client.\n", readable_type, pkt.seq);
+  printf("Sent %s packet %d to client.\n", readable_type, pkt.seq);
+
+  // DEBUGGING
+  //printf("checksum: %u\n", pkt.checksum);
 }
 
 // Reliably sends an array of packets
@@ -92,7 +95,7 @@ struct packet * prepare_packets(FILE * f)
   fseek(f, 0, SEEK_END);
   filesize = ftell(f);
   fseek(f, 0, SEEK_SET);
-  printf("requested file is %d bytes. ", filesize);
+  printf("Requested file is %d bytes. ", filesize);
   numpackets = filesize / PACKET_SIZE;
   if (filesize % PACKET_SIZE > 0)
     numpackets++;
@@ -111,6 +114,8 @@ struct packet * prepare_packets(FILE * f)
     else 
       send.type = TYPE_DATA;
     
+    compute_checksum(&send);
+
     packets[i] = send;
     // send_packet(send, sockfd, cli_addr, clilen);
   }
@@ -169,11 +174,7 @@ int main(int argc, char *argv[])
     recvlen = recvfrom(sockfd, &receive, sizeof(receive), 0, (struct sockaddr *) &cli_addr, &clilen);
     if (recvlen < 0)
       error("ERROR receiving data from client");
-    printf("received %d bytes\n", receive.length);
-
-    // debugging
-    printf("request type: %d\n", receive.type);
-    printf("file requested: %s\n", receive.data);
+    printf("Received request (%d bytes) for %s\n", receive.length, receive.data);
 
     // open file
     if (receive.type == TYPE_REQUEST) {
