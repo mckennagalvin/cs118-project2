@@ -54,7 +54,7 @@ void corrupt_packet(struct packet * p, double corruptprob) {
 }
 
 // Sends an individual packet over UDP
-void send_packet(struct packet pkt, int sockfd, struct sockaddr_in cli_addr, socklen_t clilen, double corruptprob) 
+void send_packet(struct packet pkt, int sockfd, struct sockaddr_in cli_addr, socklen_t clilen, double lossprob, double corruptprob) 
 {
   int type = pkt.type;
   char readable_type[11];
@@ -65,19 +65,23 @@ void send_packet(struct packet pkt, int sockfd, struct sockaddr_in cli_addr, soc
   else
     strcpy(readable_type, "non-data");
 
-  // corrupt data according to parameter
+  // corrupt data according to corrupt packet probability
   corrupt_packet(&pkt, corruptprob);
 
-  if (sendto(sockfd, &pkt, sizeof(pkt), 0, (struct sockaddr *) &cli_addr, clilen) < 0)
-    error("ERROR sending data to client");
-  printf("Sent %s packet %d to client.\n", readable_type, pkt.seq);
-
-  // DEBUGGING
-  printf("checksum: %u\n", pkt.checksum);
+  // lose packet according to packet loss probability
+  double random = (double)rand()/(double)RAND_MAX;
+  if (random < lossprob) { // packet loss
+    printf("Packet loss of seq #%d on its way to the receiver.\n", pkt.seq);
+  }
+  else { // no packet loss
+    if (sendto(sockfd, &pkt, sizeof(pkt), 0, (struct sockaddr *) &cli_addr, clilen) < 0)
+      error("ERROR sending data to client");
+    printf("Sent %s packet %d to client.\n", readable_type, pkt.seq);
+  }
 }
 
 // Reliably sends an array of packets
-void rdt_send_packets(struct packet *packets, int sockfd, struct sockaddr_in cli_addr, socklen_t clilen, int cwndsize, double corruptprob)
+void rdt_send_packets(struct packet *packets, int sockfd, struct sockaddr_in cli_addr, socklen_t clilen, int cwndsize, double lossprob, double corruptprob)
 {
   int nextseqnum = 0;
   int base = 0;
@@ -85,7 +89,7 @@ void rdt_send_packets(struct packet *packets, int sockfd, struct sockaddr_in cli
 
   while(!all_sent || (base < nextseqnum)) {
     while (nextseqnum < base + cwndsize && !all_sent) {
-      send_packet(packets[nextseqnum], sockfd, cli_addr, clilen, corruptprob);
+      send_packet(packets[nextseqnum], sockfd, cli_addr, clilen, lossprob, corruptprob);
       if (packets[nextseqnum].type == TYPE_FINAL_DATA) {
         all_sent = 1;
         nextseqnum++;
@@ -206,7 +210,7 @@ int main(int argc, char *argv[])
     }
 
     packets = prepare_packets(f);
-    rdt_send_packets(packets, sockfd, cli_addr, clilen, cwndsize, corruptprob);
+    rdt_send_packets(packets, sockfd, cli_addr, clilen, cwndsize, lossprob, corruptprob);
     free(packets);
     
     printf("Finished sending file. Listening for new request...\n\n");

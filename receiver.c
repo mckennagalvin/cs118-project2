@@ -97,8 +97,6 @@ int main(int argc, char *argv[])
     request.length = strlen(filename) + 1;
     request.type = TYPE_REQUEST;
 
-    printf("\nSending request for %s\n", request.data);
-
     // send request
     if (sendto(sockfd, &request, sizeof(request), 0, (struct sockaddr *) &serv_addr, sizeof(serv_addr)) < 0)
       error("ERROR sending request");
@@ -110,7 +108,7 @@ int main(int argc, char *argv[])
         recvlen = recvfrom(sockfd, &receive, sizeof(receive), 0, (struct sockaddr *) &serv_addr, &servlen);
         if (recvlen < 0)
           error("ERROR receiving from server");
-        printf("packet received from server: seq #%d, %d bytes data.\n", receive.seq, receive.length);
+        printf("Packet received from server: seq #%d, %d bytes data.\n", receive.seq, receive.length);
 
         // send cumulative ACK
         if (!corrupt(&receive) && receive.seq == expected_seq) {
