@@ -22,9 +22,7 @@ struct packet {
 // computes checksum: 1's complement of all 16-bit words in the packet
 // reference: http://minirighi.sourceforge.net/html/udp_8c.html
 
-void compute_checksum(struct packet * p) {
-	const uint16_t * buf = (const void *) p->data;
-	size_t len = p->length;
+uint16_t compute_checksum(const uint16_t * buf, size_t len) {
 
 	// calculate the sum
 	uint32_t sum = 0;
@@ -35,7 +33,7 @@ void compute_checksum(struct packet * p) {
 		len -= 2;
 	}
 
-	// add padding if packet lenght is odd
+	// add padding if packet length is odd
 	if (len & 1)
 		sum += *((uint8_t *)buf);
 
@@ -44,6 +42,11 @@ void compute_checksum(struct packet * p) {
 		sum = (sum & 0xFFFF) + (sum >> 16);
 
 	// checksum is 1's complement of sum
-	p->checksum = (uint16_t)(~sum);
+	return (uint16_t)(~sum);
 }
+
+void checksum(struct packet * p) {
+	p->checksum = compute_checksum((const uint16_t *) p->data, (size_t) p->length);
+}
+
 

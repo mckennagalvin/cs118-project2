@@ -20,7 +20,8 @@ void error(char *msg)
     exit(0);
 }
 
-void send_ack(int ack_num, int sockfd, struct sockaddr_in serv_addr) {
+void send_ack(int ack_num, int sockfd, struct sockaddr_in serv_addr)
+{
     struct packet ack;
     ack.type = TYPE_ACK;
     ack.seq = ack_num;
@@ -31,6 +32,15 @@ void send_ack(int ack_num, int sockfd, struct sockaddr_in serv_addr) {
         error("ERROR sending request");
     
     printf("Sent ack %d.\n", ack_num);
+}
+
+int corrupt(struct packet * p)
+{
+    uint16_t checksum_before = p->checksum;
+    uint16_t checksum_after  = compute_checksum((const uint16_t *) p->data, (size_t) p->length);
+    // DEBUGGING
+    // printf("checksum before was %u, now it's %u\n", checksum_before, checksum_after);
+    return checksum_before != checksum_after;
 }
 
 int main(int argc, char *argv[])
@@ -46,6 +56,7 @@ int main(int argc, char *argv[])
     struct sockaddr_in serv_addr;
     struct packet request;
     struct packet receive;
+    int expected_seq = 0;
 
     if (argc < 6) {
        fprintf(stderr,"usage %s <hostname> <port> <filename> <loss probability> <corruption probability>\n", argv[0]);
@@ -99,8 +110,18 @@ int main(int argc, char *argv[])
         recvlen = recvfrom(sockfd, &receive, sizeof(receive), 0, (struct sockaddr *) &serv_addr, &servlen);
         if (recvlen < 0)
           error("ERROR receiving from server");
-        printf("packet received from server: seq #%d, %d bytes data. ", receive.seq, receive.length);
-        send_ack(receive.seq, sockfd, serv_addr);
+        printf("packet received from server: seq #%d, %d bytes data.\n", receive.seq, receive.length);
+
+        // send cumulative ACK
+        if (!corrupt(&receive) && receive.seq == expected_seq) {
+            send_ack(expected_seq, sockfd, serv_addr);
+            expected_seq++;
+        }
+        else {
+            printf("packet received was either corrupt or sent out of order.\n");
+            send_ack(expected_seq - 1, sockfd, serv_addr);
+        }
+
         if(receive.type == TYPE_FINAL_DATA)
             break;
     }

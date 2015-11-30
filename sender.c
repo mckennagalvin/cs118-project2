@@ -12,6 +12,7 @@
 #include <strings.h>
 #include <sys/wait.h>    // for the waitpid() system call
 #include <signal.h>	     // signal name macros, and the kill() prototype
+#include <time.h>
 
 #include "packet.c"
 
@@ -41,8 +42,19 @@ int listen_for_ack(int sockfd) {
   return ack_number;
 }
 
+// Make data corrupt according to probability passed in as parameter
+// (this is done after the checksum is computed, so the checksum at the receiver's end will not match the checksum in the packet)
+void corrupt_packet(struct packet * p, double corruptprob) {
+  double random = (double)rand()/(double)RAND_MAX;
+  if (random < corruptprob) {
+    // corrupt packet (currently just changes the first character in data, TODO make more robust??)
+    char c = p->data[0];
+    p->data[0] = (char)(c + 1);
+  }
+}
+
 // Sends an individual packet over UDP
-void send_packet(struct packet pkt, int sockfd, struct sockaddr_in cli_addr, socklen_t clilen) 
+void send_packet(struct packet pkt, int sockfd, struct sockaddr_in cli_addr, socklen_t clilen, double corruptprob) 
 {
   int type = pkt.type;
   char readable_type[11];
@@ -53,16 +65,19 @@ void send_packet(struct packet pkt, int sockfd, struct sockaddr_in cli_addr, soc
   else
     strcpy(readable_type, "non-data");
 
+  // corrupt data according to parameter
+  corrupt_packet(&pkt, corruptprob);
+
   if (sendto(sockfd, &pkt, sizeof(pkt), 0, (struct sockaddr *) &cli_addr, clilen) < 0)
     error("ERROR sending data to client");
   printf("Sent %s packet %d to client.\n", readable_type, pkt.seq);
 
   // DEBUGGING
-  //printf("checksum: %u\n", pkt.checksum);
+  printf("checksum: %u\n", pkt.checksum);
 }
 
 // Reliably sends an array of packets
-void rdt_send_packets(struct packet *packets, int sockfd, struct sockaddr_in cli_addr, socklen_t clilen, int cwndsize)
+void rdt_send_packets(struct packet *packets, int sockfd, struct sockaddr_in cli_addr, socklen_t clilen, int cwndsize, double corruptprob)
 {
   int nextseqnum = 0;
   int base = 0;
@@ -70,7 +85,7 @@ void rdt_send_packets(struct packet *packets, int sockfd, struct sockaddr_in cli
 
   while(!all_sent || (base < nextseqnum)) {
     while (nextseqnum < base + cwndsize && !all_sent) {
-      send_packet(packets[nextseqnum], sockfd, cli_addr, clilen);
+      send_packet(packets[nextseqnum], sockfd, cli_addr, clilen, corruptprob);
       if (packets[nextseqnum].type == TYPE_FINAL_DATA) {
         all_sent = 1;
         nextseqnum++;
@@ -114,7 +129,7 @@ struct packet * prepare_packets(FILE * f)
     else 
       send.type = TYPE_DATA;
     
-    compute_checksum(&send);
+    checksum(&send);
 
     packets[i] = send;
     // send_packet(send, sockfd, cli_addr, clilen);
@@ -134,6 +149,10 @@ int main(int argc, char *argv[])
   double lossprob, corruptprob;
   int cwndsize;
   struct packet *packets;
+
+  // initialize random number generator
+  time_t t;
+  srand((unsigned) time(&t));
 
   if (argc == 2) {
     portno = atoi(argv[1]);
@@ -187,7 +206,7 @@ int main(int argc, char *argv[])
     }
 
     packets = prepare_packets(f);
-    rdt_send_packets(packets, sockfd, cli_addr, clilen, cwndsize);
+    rdt_send_packets(packets, sockfd, cli_addr, clilen, cwndsize, corruptprob);
     free(packets);
     
     printf("Finished sending file. Listening for new request...\n\n");
