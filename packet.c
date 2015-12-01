@@ -68,7 +68,6 @@ int corrupt(struct packet * p) {
 int rdt_receive(int sockfd, void * p, size_t len, struct sockaddr *src_addr, socklen_t *addrlen, double lossprob, double corruptprob, int expected_seq) {
 
 	struct packet * pkt = (struct packet *)p;
-	int s = pkt->seq;
 
 	// receive packet - check for actual packet loss
 	if (recvfrom(sockfd, p, len, 0, src_addr, addrlen) < 0) {
@@ -79,31 +78,31 @@ int rdt_receive(int sockfd, void * p, size_t len, struct sockaddr *src_addr, soc
 	// lose packet according to packet loss probability
   	double random = (double)rand()/(double)RAND_MAX;
   	if (random < lossprob) {
-  		printf("Packet with seq#%d was simulated to be lost on its way to the server.\n", s);
+  		printf("Packet with seq#%d was simulated to be lost.\n", pkt->seq);
 		return RESULT_PACKET_LOSS;
   	}
 
 	// corrupt data according to corrupt packet probability
 	random = (double)rand()/(double)RAND_MAX;
   	if (random < corruptprob) {
-  		printf("Packet with seq#%d was simulated to be corrupt at the server.\n", s);
+  		printf("Packet with seq#%d was simulated to be corrupt.\n", pkt->seq);
 		return RESULT_PACKET_CORRUPT;
   	}
 
   	// check for actual corruption
   	if (corrupt(pkt)) {
-  		printf("Packet with seq#%d was found to be corrupt.\n", s);
+  		printf("Packet with seq#%d was found to be corrupt.\n", pkt->seq);
   		return RESULT_PACKET_CORRUPT;
   	}
 
   	// check that packet is in correct order
-  	if (s != expected_seq) {
-  		printf("Packet out of order: expected seq#%d, received seq#%d. Packet discarded.\n", expected_seq, s);
+  	if (pkt->seq != expected_seq) {
+  		printf("Packet out of order: expected seq#%d, received seq#%d. Packet discarded.\n", expected_seq, pkt->seq);
   		return RESULT_PACKET_OUT_OF_ORDER;
   	}
 
   	// if it gets to this point, packet has arrived successfully in order and is not corrupt
-  	printf("Received seq#%d successfully. Packet is not corrupt.\n", s);
+  	printf("Received seq#%d successfully. Packet is not corrupt.\n", pkt->seq);
   	return RESULT_PACKET_OK;
 
 }

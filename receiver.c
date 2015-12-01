@@ -40,6 +40,7 @@ int main(int argc, char *argv[])
     struct hostent *server; // contains tons of information, including the server's IP address
     int portno;
     char * filename;
+    FILE * f;
     double lossprob;
     double corruptprob;
     int result;
@@ -93,6 +94,13 @@ int main(int argc, char *argv[])
       error("ERROR sending request");
     printf("Sent request for file %s\n", filename);
 
+    // create copy of file on receiver's end
+    char * prefix = "copy_";
+    char * filecopy = malloc(strlen(filename) + strlen(prefix) + 1);
+    strcpy(filecopy, prefix);
+    strcat(filecopy, filename);
+    f = fopen(filecopy, "w");
+
     // scan for messages from server
     while (1) {
 
@@ -100,6 +108,8 @@ int main(int argc, char *argv[])
         if (result == RESULT_PACKET_OK) {
             send_ack(expected_seq, sockfd, serv_addr);
             expected_seq++;
+            // transfer data to receiver's copy of the file
+            fwrite(receive.data, 1, receive.length, f);
         }
         else {
             send_ack(expected_seq - 1, sockfd, serv_addr);
@@ -109,6 +119,7 @@ int main(int argc, char *argv[])
             break;
     }
     
-    close(sockfd);
+    fclose(f);
+    free(filecopy);
     return 0;
 }
