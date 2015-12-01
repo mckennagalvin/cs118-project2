@@ -42,17 +42,6 @@ int listen_for_ack(int sockfd) {
   return ack_number;
 }
 
-// Make data corrupt according to probability passed in as parameter
-// (this is done after the checksum is computed, so the checksum at the receiver's end will not match the checksum in the packet)
-void corrupt_packet(struct packet * p, double corruptprob) {
-  double random = (double)rand()/(double)RAND_MAX;
-  if (random < corruptprob) {
-    // corrupt packet (currently just changes the first character in data, TODO make more robust??)
-    char c = p->data[0];
-    p->data[0] = (char)(c + 1);
-  }
-}
-
 // Sends an individual packet over UDP
 void send_packet(struct packet pkt, int sockfd, struct sockaddr_in cli_addr, socklen_t clilen, double lossprob, double corruptprob) 
 {
@@ -65,19 +54,9 @@ void send_packet(struct packet pkt, int sockfd, struct sockaddr_in cli_addr, soc
   else
     strcpy(readable_type, "non-data");
 
-  // corrupt data according to corrupt packet probability
-  corrupt_packet(&pkt, corruptprob);
-
-  // lose packet according to packet loss probability
-  double random = (double)rand()/(double)RAND_MAX;
-  if (random < lossprob) { // packet loss
-    printf("Packet loss of seq #%d on its way to the receiver.\n", pkt.seq);
-  }
-  else { // no packet loss
-    if (sendto(sockfd, &pkt, sizeof(pkt), 0, (struct sockaddr *) &cli_addr, clilen) < 0)
-      error("ERROR sending data to client");
-    printf("Sent %s packet %d to client.\n", readable_type, pkt.seq);
-  }
+  if (sendto(sockfd, &pkt, sizeof(pkt), 0, (struct sockaddr *) &cli_addr, clilen) < 0)
+    error("ERROR sending data to client");
+  printf("Sent %s packet %d to client.\n", readable_type, pkt.seq);
 }
 
 // Reliably sends an array of packets

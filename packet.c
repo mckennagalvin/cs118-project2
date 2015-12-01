@@ -5,16 +5,22 @@
  */
 
 #define PACKET_SIZE 100
+
 #define TYPE_DATA 0
 #define TYPE_FINAL_DATA 1
 #define TYPE_REQUEST 2
 #define TYPE_ACK 3
 
+#define RESULT_PACKET_LOSS 0
+#define RESULT_PACKET_CORRUPT 1
+#define RESULT_PACKET_OUT_OF_ORDER 2
+#define RESULT_PACKET_OK 3
+
 struct packet {
-	char data[PACKET_SIZE];
  	int seq;
  	int type;
  	int length;
+ 	char data[PACKET_SIZE];
  	uint16_t checksum;
 };
 
@@ -46,7 +52,60 @@ uint16_t compute_checksum(const uint16_t * buf, size_t len) {
 }
 
 void checksum(struct packet * p) {
-	p->checksum = compute_checksum((const uint16_t *) p->data, (size_t) p->length);
+	size_t len = (size_t) p->length + (3 * sizeof(int));
+	p->checksum = compute_checksum((const uint16_t *) p, len);
+}
+
+int corrupt(struct packet * p) {
+	size_t len = (size_t) p->length + (3 * sizeof(int));
+    uint16_t checksum_before = p->checksum;
+    uint16_t checksum_after  = compute_checksum((const uint16_t *) p, len);
+    // DEBUGGING
+    //printf("checksum before was %u, now it's %u\n", checksum_before, checksum_after);
+    return checksum_before != checksum_after;
+}
+
+int rdt_receive(int sockfd, void * p, size_t len, struct sockaddr *src_addr, socklen_t *addrlen, double lossprob, double corruptprob, int expected_seq) {
+
+	struct packet * pkt = (struct packet *)p;
+	int s = pkt->seq;
+
+	// receive packet - check for actual packet loss
+	if (recvfrom(sockfd, p, len, 0, src_addr, addrlen) < 0) {
+		printf("Packet was not received\n");
+		return RESULT_PACKET_LOSS;
+	}
+
+	// lose packet according to packet loss probability
+  	double random = (double)rand()/(double)RAND_MAX;
+  	if (random < lossprob) {
+  		printf("Packet with seq#%d was simulated to be lost on its way to the server.\n", s);
+		return RESULT_PACKET_LOSS;
+  	}
+
+	// corrupt data according to corrupt packet probability
+	random = (double)rand()/(double)RAND_MAX;
+  	if (random < corruptprob) {
+  		printf("Packet with seq#%d was simulated to be corrupt at the server.\n", s);
+		return RESULT_PACKET_CORRUPT;
+  	}
+
+  	// check for actual corruption
+  	if (corrupt(pkt)) {
+  		printf("Packet with seq#%d was found to be corrupt.\n", s);
+  		return RESULT_PACKET_CORRUPT;
+  	}
+
+  	// check that packet is in correct order
+  	if (s != expected_seq) {
+  		printf("Packet out of order: expected seq#%d, received seq#%d. Packet discarded.\n", expected_seq, s);
+  		return RESULT_PACKET_OUT_OF_ORDER;
+  	}
+
+  	// if it gets to this point, packet has arrived successfully in order and is not corrupt
+  	printf("Received seq#%d successfully. Packet is not corrupt.\n", s);
+  	return RESULT_PACKET_OK;
+
 }
 
 

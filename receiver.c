@@ -34,15 +34,6 @@ void send_ack(int ack_num, int sockfd, struct sockaddr_in serv_addr)
     printf("Sent ack %d.\n", ack_num);
 }
 
-int corrupt(struct packet * p)
-{
-    uint16_t checksum_before = p->checksum;
-    uint16_t checksum_after  = compute_checksum((const uint16_t *) p->data, (size_t) p->length);
-    // DEBUGGING
-    // printf("checksum before was %u, now it's %u\n", checksum_before, checksum_after);
-    return checksum_before != checksum_after;
-}
-
 int main(int argc, char *argv[])
 {
     int sockfd; // socket descriptor
@@ -51,7 +42,7 @@ int main(int argc, char *argv[])
     char * filename;
     double lossprob;
     double corruptprob;
-    int recvlen;
+    int result;
     socklen_t servlen;
     struct sockaddr_in serv_addr;
     struct packet request;
@@ -105,18 +96,12 @@ int main(int argc, char *argv[])
     // scan for messages from server
     while (1) {
 
-        recvlen = recvfrom(sockfd, &receive, sizeof(receive), 0, (struct sockaddr *) &serv_addr, &servlen);
-        if (recvlen < 0)
-          error("ERROR receiving from server");
-        printf("Packet received from server: seq #%d, %d bytes data.\n", receive.seq, receive.length);
-
-        // send cumulative ACK
-        if (!corrupt(&receive) && receive.seq == expected_seq) {
+        result = rdt_receive(sockfd, &receive, sizeof(receive), (struct sockaddr *) &serv_addr, &servlen, lossprob, corruptprob, expected_seq);
+        if (result == RESULT_PACKET_OK) {
             send_ack(expected_seq, sockfd, serv_addr);
             expected_seq++;
         }
         else {
-            printf("packet received was either corrupt or sent out of order.\n");
             send_ack(expected_seq - 1, sockfd, serv_addr);
         }
 
