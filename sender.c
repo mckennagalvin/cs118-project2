@@ -77,10 +77,10 @@ int listen_for_ack(int sockfd) {
         printf("Simulated corruption of packet type %d. (Was expecting ACK).\n", receive.type);
       return -99;
     }
-    if (corrupt(&receive)) {
-      printf("Received actual corrupt packet\n");
-      return -99;
-    }
+    // if (corrupt(&receive)) {
+    //   printf("Received actual corrupt packet\n");
+    //   return -99;
+    // }
   }
   else {
     return -99;
@@ -273,10 +273,10 @@ int main(int argc, char *argv[])
         printf("Simulated corruption of unexpected packet\n");
       continue;
     }
-    if (corrupt(&receive)) {
-      printf("Received actual corrupt packet\n");
-      continue;
-    }
+    // if (corrupt(&receive)) {
+    //   printf("Received actual corrupt packet\n");
+    //   continue;
+    // }
 
     if (recvlen < 0)
       error("ERROR receiving data from client");
