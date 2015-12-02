@@ -11,6 +11,8 @@
 #include <netdb.h>      // define structures like hostent
 #include <stdlib.h>
 #include <strings.h>
+#include <time.h>
+#include <sys/time.h>
 
  #include "packet.c"
 
@@ -20,6 +22,12 @@ void error(char *msg)
     exit(0);
 }
 
+// Returns the milliseconds difference between calls to clock()
+double diff_ms(clock_t clock1, clock_t clock2)
+{
+  return (clock2-clock1) / (CLOCKS_PER_SEC/1000000);
+}
+
 void send_ack(int ack_num, int sockfd, struct sockaddr_in serv_addr)
 {
     struct packet ack;
@@ -27,6 +35,7 @@ void send_ack(int ack_num, int sockfd, struct sockaddr_in serv_addr)
     ack.seq = ack_num;
     ack.length = 0;
     strcpy(ack.data, "");
+    checksum(&ack);
 
     if (sendto(sockfd, &ack, sizeof(ack), 0, (struct sockaddr *) &serv_addr, sizeof(serv_addr)) < 0)
         error("ERROR sending request");
@@ -91,6 +100,7 @@ int main(int argc, char *argv[])
     strcpy(request.data, filename);
     request.length = strlen(filename) + 1;
     request.type = TYPE_REQUEST;
+    checksum(&request);
 
     // send request
     if (sendto(sockfd, &request, sizeof(request), 0, (struct sockaddr *) &serv_addr, sizeof(serv_addr)) < 0)
@@ -105,7 +115,14 @@ int main(int argc, char *argv[])
     f = fopen(filecopy, "w");
 
     // scan for messages from server
+    int timer_running = 0;
+    clock_t timer_start = 0;
     while (1) {
+
+        if ( timer_running && ( diff_ms(timer_start, clock()) > TIME_WAIT ) ) {
+            printf("Exiting time wait state.\n");
+            break;
+        }
 
         result = rdt_receive(sockfd, &receive, sizeof(receive), (struct sockaddr *) &serv_addr, &servlen, lossprob, corruptprob, expected_seq);
         if (result == RESULT_PACKET_OK) {
@@ -119,11 +136,13 @@ int main(int argc, char *argv[])
             send_ack(expected_seq - 1, sockfd, serv_addr);
         }
         // only end if final ACK wasn't out of order, lost, or corrupt
-        if(receive.type == TYPE_FINAL_DATA && result == RESULT_PACKET_OK)
-            break;
+        if(receive.type == TYPE_FINAL_DATA && result == RESULT_PACKET_OK && timer_running == 0) {
+            printf("Final ACK sent, entering time wait state in case ACK is not received by sender.\n");
+            timer_start = clock();
+            timer_running = 1;
+        }
     }
 
-    // enter time wait state (in case final ACK is lost)
 
     close(sockfd);
     fclose(f);

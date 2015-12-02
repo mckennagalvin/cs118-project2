@@ -6,6 +6,7 @@
 
 #define PACKET_SIZE 100
 #define RETRANSMIT_TIMEOUT 500
+#define TIME_WAIT 10000
 
 #define TYPE_DATA 0
 #define TYPE_FINAL_DATA 1
@@ -107,6 +108,5 @@ int rdt_receive(int sockfd, void * p, size_t len, struct sockaddr *src_addr, soc
   	return RESULT_PACKET_OK;
 
 }
-
 
 
