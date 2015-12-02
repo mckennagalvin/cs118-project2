@@ -28,6 +28,20 @@ double diff_ms(clock_t clock1, clock_t clock2)
   return (clock2-clock1) / (CLOCKS_PER_SEC/1000000);
 }
 
+// Waits 100 milliseconds to see if socket is readable
+int is_readable(int sockfd) {
+  fd_set sock_set;
+  FD_ZERO(&sock_set);
+  FD_SET(sockfd, &sock_set);
+  struct timeval tv;
+  tv.tv_sec  = 0;
+  tv.tv_usec = 100 * 1000; // 100 milliseconds to microseconds
+  if (select(sockfd+1, &sock_set, 0, 0, &tv) == -1)
+    error("Select failed in is_readable.\n");
+
+  return FD_ISSET(sockfd, &sock_set) != 0;
+}
+
 void send_ack(int ack_num, int sockfd, struct sockaddr_in serv_addr)
 {
     struct packet ack;
@@ -123,17 +137,18 @@ int main(int argc, char *argv[])
             printf("Exiting time wait state.\n");
             break;
         }
-
-        result = rdt_receive(sockfd, &receive, sizeof(receive), (struct sockaddr *) &serv_addr, &servlen, lossprob, corruptprob, expected_seq);
-        if (result == RESULT_PACKET_OK) {
-            send_ack(expected_seq, sockfd, serv_addr);
-            expected_seq++;
-            // transfer data to receiver's copy of the file
-            fwrite(receive.data, 1, receive.length, f);
-        }
-        // don't send ACK if packet loss
-        else if (result == RESULT_PACKET_CORRUPT || result == RESULT_PACKET_OUT_OF_ORDER) {
-            send_ack(expected_seq - 1, sockfd, serv_addr);
+        if (is_readable(sockfd)) {
+            result = rdt_receive(sockfd, &receive, sizeof(receive), (struct sockaddr *) &serv_addr, &servlen, lossprob, corruptprob, expected_seq);
+            if (result == RESULT_PACKET_OK) {
+                send_ack(expected_seq, sockfd, serv_addr);
+                expected_seq++;
+                // transfer data to receiver's copy of the file
+                fwrite(receive.data, 1, receive.length, f);
+            }
+            // don't send ACK if packet loss
+            else if (result == RESULT_PACKET_CORRUPT || result == RESULT_PACKET_OUT_OF_ORDER) {
+                send_ack(expected_seq - 1, sockfd, serv_addr);
+            }
         }
         // only end if final ACK wasn't out of order, lost, or corrupt
         if(receive.type == TYPE_FINAL_DATA && result == RESULT_PACKET_OK && timer_running == 0) {
