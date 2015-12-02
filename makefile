@@ -13,4 +13,9 @@ receiver.o : receiver.c
 	gcc -std=c99 -c receiver.c
 
 clean: 
-	rm receiver sender receiver.o sender.o
+	rm receiver sender receiver.o sender.o makefile.deps
+
+-include makefile.deps
+
+makefile.deps:
+	gcc -std=c99 -MM *.c > makefile.deps

@@ -11,10 +11,13 @@
 #include <stdlib.h>
 #include <strings.h>
 #include <sys/wait.h>    // for the waitpid() system call
+#include <sys/time.h>
 #include <signal.h>	     // signal name macros, and the kill() prototype
 #include <time.h>
 
 #include "packet.c"
+
+double lossprob, corruptprob;
 
 void error(char *msg)
 {
@@ -22,28 +25,81 @@ void error(char *msg)
   exit(1);
 }
 
-// Listens for an ack, returning the ack number
+int should_lose_packet()
+{
+  return (rand() / (double)RAND_MAX) < lossprob;
+}
+
+int should_corrupt_packet()
+{
+  return (rand() / (double)RAND_MAX) < corruptprob;
+}
+
+// Returns the milliseconds difference between calls to clock()
+double diff_ms(clock_t clock1, clock_t clock2)
+{
+  return (clock2-clock1) / (CLOCKS_PER_SEC/1000000);
+}
+
+// Waits 100 milliseconds to see if socket is readable
+int is_readable(int sockfd) {
+  fd_set sock_set;
+  FD_ZERO(&sock_set);
+  FD_SET(sockfd, &sock_set);
+  struct timeval tv;
+  tv.tv_sec  = 0;
+  tv.tv_usec = 100 * 1000; // 100 milliseconds to microseconds
+  if (select(sockfd+1, &sock_set, 0, 0, &tv) == -1)
+    error("Select failed in is_readable.\n");
+
+  return FD_ISSET(sockfd, &sock_set) != 0;
+}
+
+// Listens for an ack, returning the ack number. Returns -99 if timeout
 int listen_for_ack(int sockfd) {
   int recvlen;
-  int ack_number = -1;
+  int ack_number = -99;
   struct packet receive;
 
-  while (ack_number == -1) {
+  if (is_readable(sockfd)) {
     recvlen = recvfrom(sockfd, &receive, sizeof(receive), 0, NULL, NULL);
-    if (recvlen < 0)
-      error("ERROR receiving ack from client");
-    if (receive.type != TYPE_ACK) {
-      fprintf(stderr, "Expected ACK, received type %d", receive.type);
-      continue;
+    if (should_lose_packet()) {
+      if (receive.type == TYPE_ACK)
+        printf("Simulated loss of ack # %d\n", receive.seq);
+      else
+        printf("Simulated loss of packet type %d. (Was expecting ACK).\n", receive.type);
+      return -99;
     }
-    ack_number = receive.seq;
-  } 
+    if (should_corrupt_packet()) {
+      if (receive.type == TYPE_ACK)
+        printf("Simulated corruption of ack # %d\n", receive.seq);
+      else
+        printf("Simulated corruption of packet type %d. (Was expecting ACK).\n", receive.type);
+      return -99;
+    }
+    if (corrupt(&receive)) {
+      printf("Received actual corrupt packet\n");
+      return -99;
+    }
+  }
+  else {
+    return -99;
+  }  
+
+  if (recvlen < 0)
+    error("ERROR receiving ack from client");
+  if (receive.type != TYPE_ACK) {
+    fprintf(stderr, "Expected ACK, received type %d", receive.type);
+    return -99;
+  }
+  ack_number = receive.seq;
+
   printf("Received ack %d.\n", ack_number);
   return ack_number;
 }
 
 // Sends an individual packet over UDP
-void send_packet(struct packet pkt, int sockfd, struct sockaddr_in cli_addr, socklen_t clilen, double lossprob, double corruptprob) 
+void send_packet(struct packet pkt, int sockfd, struct sockaddr_in cli_addr, socklen_t clilen) 
 {
   int type = pkt.type;
   char readable_type[11];
@@ -60,15 +116,23 @@ void send_packet(struct packet pkt, int sockfd, struct sockaddr_in cli_addr, soc
 }
 
 // Reliably sends an array of packets
-void rdt_send_packets(struct packet *packets, int sockfd, struct sockaddr_in cli_addr, socklen_t clilen, int cwndsize, double lossprob, double corruptprob)
+void rdt_send_packets(struct packet *packets, int sockfd, struct sockaddr_in cli_addr, socklen_t clilen, int cwndsize)
 {
   int nextseqnum = 0;
   int base = 0;
   int all_sent = 0;
+  int i;
+
+  int timer_running = 0;
+  clock_t timer_start = 0;
 
   while(!all_sent || (base < nextseqnum)) {
     while (nextseqnum < base + cwndsize && !all_sent) {
-      send_packet(packets[nextseqnum], sockfd, cli_addr, clilen, lossprob, corruptprob);
+      send_packet(packets[nextseqnum], sockfd, cli_addr, clilen);
+      if (base == nextseqnum) {
+        timer_running = 1;
+        timer_start = clock();
+      }
       if (packets[nextseqnum].type == TYPE_FINAL_DATA) {
         all_sent = 1;
         nextseqnum++;
@@ -76,7 +140,29 @@ void rdt_send_packets(struct packet *packets, int sockfd, struct sockaddr_in cli
       }
       nextseqnum++;
     }
-    base = listen_for_ack(sockfd) + 1;
+
+    int ack = listen_for_ack(sockfd);
+    if (ack != -99) {
+      base = ack + 1;
+      if (base == nextseqnum) {
+        timer_running = 0;
+      }
+      else {
+        timer_running = 1;
+        timer_start = clock();
+      }
+    }
+  
+    // Check for timeout
+    // fprintf(stderr, "timer_running: %d. diff: %f. RTO: %d\n", timer_running, diff_ms(timer_start, clock()), RETRANSMIT_TIMEOUT);
+    if (timer_running && ( diff_ms(timer_start, clock()) > RETRANSMIT_TIMEOUT ) ) {
+      printf("Timeout on packet %d. Retransmitting packet(s) %d to %d:\n", base, base, nextseqnum-1);
+      timer_running = 1;
+      timer_start = clock();
+      for (i = base; i < nextseqnum; i++) {
+        send_packet(packets[i], sockfd, cli_addr, clilen);
+      }
+    }
   }
 }
 
@@ -129,7 +215,6 @@ int main(int argc, char *argv[])
   FILE * f;
   char * filename;
   int i;
-  double lossprob, corruptprob;
   int cwndsize;
   struct packet *packets;
 
@@ -174,6 +259,25 @@ int main(int argc, char *argv[])
 
     // receieve request from client
     recvlen = recvfrom(sockfd, &receive, sizeof(receive), 0, (struct sockaddr *) &cli_addr, &clilen);
+    if (should_lose_packet()) {
+      if (receive.type == TYPE_REQUEST)
+        printf("Simulated loss of request packet\n");
+      else 
+        printf("Simulated loss of unexpected packet\n");
+      continue;
+    }
+    if (should_corrupt_packet()) {
+      if (receive.type == TYPE_REQUEST)
+        printf("Simulated corruption of request packet\n");
+      else 
+        printf("Simulated corruption of unexpected packet\n");
+      continue;
+    }
+    if (corrupt(&receive)) {
+      printf("Received actual corrupt packet\n");
+      continue;
+    }
+
     if (recvlen < 0)
       error("ERROR receiving data from client");
     printf("Received request (%d bytes) for %s\n", receive.length, receive.data);
@@ -189,7 +293,7 @@ int main(int argc, char *argv[])
     }
 
     packets = prepare_packets(f);
-    rdt_send_packets(packets, sockfd, cli_addr, clilen, cwndsize, lossprob, corruptprob);
+    rdt_send_packets(packets, sockfd, cli_addr, clilen, cwndsize);
     free(packets);
     
     printf("Finished sending file. Listening for new request...\n\n");

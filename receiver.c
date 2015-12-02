@@ -118,7 +118,8 @@ int main(int argc, char *argv[])
         if(receive.type == TYPE_FINAL_DATA)
             break;
     }
-    
+
+    close(sockfd);
     fclose(f);
     free(filecopy);
     return 0;
