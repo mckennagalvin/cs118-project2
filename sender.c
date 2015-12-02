@@ -219,8 +219,7 @@ int main(int argc, char *argv[])
   struct packet *packets;
 
   // initialize random number generator
-  time_t t;
-  srand((unsigned) time(&t));
+  srand(time(NULL));
 
   if (argc == 2) {
     portno = atoi(argv[1]);

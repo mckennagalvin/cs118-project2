@@ -50,6 +50,9 @@ int main(int argc, char *argv[])
     struct packet receive;
     int expected_seq = 0;
 
+    // initialize random number generator
+    srand(time(NULL));
+
     if (argc < 6) {
        fprintf(stderr,"usage %s <hostname> <port> <filename> <loss probability> <corruption probability>\n", argv[0]);
        exit(1);
@@ -115,10 +118,12 @@ int main(int argc, char *argv[])
         else if (result == RESULT_PACKET_CORRUPT || result == RESULT_PACKET_OUT_OF_ORDER) {
             send_ack(expected_seq - 1, sockfd, serv_addr);
         }
-
-        if(receive.type == TYPE_FINAL_DATA)
+        // only end if final ACK wasn't out of order, lost, or corrupt
+        if(receive.type == TYPE_FINAL_DATA && result == RESULT_PACKET_OK)
             break;
     }
+
+    // enter time wait state (in case final ACK is lost)
 
     close(sockfd);
     fclose(f);
