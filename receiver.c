@@ -111,7 +111,8 @@ int main(int argc, char *argv[])
             // transfer data to receiver's copy of the file
             fwrite(receive.data, 1, receive.length, f);
         }
-        else {
+        // don't send ACK if packet loss
+        else if (result == RESULT_PACKET_CORRUPT || result == RESULT_PACKET_OUT_OF_ORDER) {
             send_ack(expected_seq - 1, sockfd, serv_addr);
         }
 
