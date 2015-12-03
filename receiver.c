@@ -121,6 +121,10 @@ int main(int argc, char *argv[])
       error("ERROR sending request");
     printf("Sent request for file %s\n", filename);
 
+    // in case request is lost at sender, enter timeout and resend if necessary
+    int received_first_ack = 0;
+    clock_t timer_start = clock();
+
     // create copy of file on receiver's end
     char * prefix = "copy_";
     char * filecopy = malloc(strlen(filename) + strlen(prefix) + 1);
@@ -129,16 +133,27 @@ int main(int argc, char *argv[])
     f = fopen(filecopy, "w");
 
     // scan for messages from server
-    int timer_running = 0;
-    clock_t timer_start = 0;
+    int time_wait_running = 0;
     while (1) {
 
-        if ( timer_running && ( diff_ms(timer_start, clock()) > TIME_WAIT ) ) {
+        // resend request if timeout
+        if (!received_first_ack && ( diff_ms(timer_start, clock()) > RETRANSMIT_TIMEOUT )) {
+            // send request
+            if (sendto(sockfd, &request, sizeof(request), 0, (struct sockaddr *) &serv_addr, sizeof(serv_addr)) < 0)
+              error("ERROR sending request");
+            printf("Sent request for file %s\n", filename);
+            timer_start = clock();
+        }
+
+        if ( time_wait_running && ( diff_ms(timer_start, clock()) > TIME_WAIT ) ) {
             printf("Exiting time wait state.\n");
             break;
         }
         if (is_readable(sockfd)) {
             result = rdt_receive(sockfd, &receive, sizeof(receive), (struct sockaddr *) &serv_addr, &servlen, lossprob, corruptprob, expected_seq);
+            if (received_first_ack == 0) {
+                received_first_ack = 1;
+            }
             if (result == RESULT_PACKET_OK) {
                 send_ack(expected_seq, sockfd, serv_addr);
                 expected_seq++;
@@ -151,10 +166,10 @@ int main(int argc, char *argv[])
             }
         }
         // only end if final ACK wasn't out of order, lost, or corrupt
-        if(receive.type == TYPE_FINAL_DATA && result == RESULT_PACKET_OK && timer_running == 0) {
+        if(receive.type == TYPE_FINAL_DATA && result == RESULT_PACKET_OK && time_wait_running == 0) {
             printf("Final ACK sent, entering time wait state in case ACK is not received by sender.\n");
             timer_start = clock();
-            timer_running = 1;
+            time_wait_running = 1;
         }
     }
 

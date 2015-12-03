@@ -6,7 +6,7 @@
 
 #define PACKET_SIZE 100
 #define RETRANSMIT_TIMEOUT 500
-#define TIME_WAIT 5000
+#define TIME_WAIT 1000
 
 #define TYPE_DATA 0
 #define TYPE_FINAL_DATA 1
